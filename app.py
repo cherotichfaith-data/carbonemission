@@ -1,66 +1,53 @@
 # app.py
 import streamlit as st
-import joblib
 import pandas as pd
+import joblib
 
-# --- Load Model and Encoder ---
-@st.cache_resource
-def load_model():
-    model = joblib.load("co2_model.pkl")
-    encoder = joblib.load("encoder.pkl")
-    expected_column_order = joblib.load("columns.pkl")
-    average_gasoline_emissions = joblib.load("avg_gas.pkl")
-    return model, encoder, expected_column_order, average_gasoline_emissions
+# --- Load model & encoder ---
+model = joblib.load("co2_model.pkl")
+encoder = joblib.load("encoder.pkl")
 
-model, encoder, expected_column_order, average_gasoline_emissions = load_model()
+st.set_page_config(page_title="Nairobi Taxi Emissions", page_icon="🚖")
 
-# --- Streamlit UI ---
-st.title("CO2Taxi Emissions & Fee Predictor 🚖🌍")
-st.write("Predict CO₂ emissions for Nairobi taxi trips and calculate the corresponding fees.")
+st.title("🚖 Nairobi Taxi CO₂ Emissions & Fees")
+st.markdown("Enter your trip details to predict CO₂ emissions and calculate fees.")
 
-trip_id = st.number_input("Trip ID", min_value=1)
-distance = st.number_input("Distance (km)", min_value=0.1, step=0.1)
-vehicle_type = st.selectbox("Vehicle Type", ["Sedan", "SUV", "Minivan"])
-fuel_type = st.selectbox("Fuel Type", ["Petrol", "Diesel", "EV"])
+# --- Input form ---
+with st.form("trip_form"):
+    trip_id = st.number_input("Trip ID", min_value=1, value=1)
+    distance_km = st.number_input("Distance (km)", min_value=0.0, value=5.0, step=0.1)
+    vehicle_type = st.selectbox("Vehicle Type", ["Sedan", "SUV", "MiniBus", "Motorbike"])
+    fuel_type = st.selectbox("Fuel Type", ["Petrol", "Diesel", "EV"])
 
-# --- Prediction Logic ---
-def predict_emissions_and_fee(trip_id, distance, vehicle_type, fuel_type):
+    submitted = st.form_submit_button("Predict")
+
+if submitted:
+    # Create input dataframe
     df_input = pd.DataFrame([{
         "trip_id": trip_id,
-        "distance_km": distance,
+        "distance_km": distance_km,
         "vehicle_type": vehicle_type,
         "fuel_type": fuel_type
     }])
 
-    # Encode categorical variables
-    df_encoded = encoder.transform(df_input[['vehicle_type', 'fuel_type']])
-    df_encoded = pd.DataFrame(df_encoded, columns=encoder.get_feature_names_out(['vehicle_type', 'fuel_type']))
+    # Encode categorical columns
+    categorical_cols = ["vehicle_type", "fuel_type"]
+    df_encoded = encoder.transform(df_input[categorical_cols])
+    df_encoded = pd.DataFrame(df_encoded, columns=encoder.get_feature_names_out(categorical_cols))
 
-    # Prepare processed dataframe
-    df_processed = pd.DataFrame(0, index=[0], columns=expected_column_order)
-    df_processed['trip_id'] = trip_id
-    df_processed['distance_km'] = distance
+    # Combine numeric + encoded categorical columns
+    df_model_input = df_input.copy()
     for col in df_encoded.columns:
-        if col in df_processed.columns:
-            df_processed[col] = df_encoded[col]
+        df_model_input[col] = df_encoded[col]
 
     # Predict emissions
-    predicted_emissions = model.predict(df_processed)[0]
-    calculated_fee = 5 + predicted_emissions * 2  # base fee + per kg emission cost
+    predicted_emissions = model.predict(df_model_input)[0]
 
-    # Recommendation
-    recommendation = None
-    if fuel_type != "EV":
-        savings = average_gasoline_emissions - predicted_emissions
-        if savings > 0.1:
-            recommendation = f"Choosing an EV could save ~{savings:.2f} kg CO₂."
+    # Calculate fee
+    base_fee = 5
+    emission_cost_per_kg = 2
+    calculated_fee = base_fee + predicted_emissions * emission_cost_per_kg
 
-    return round(predicted_emissions, 4), round(calculated_fee, 2), recommendation
-
-# --- Predict Button ---
-if st.button("Predict Emissions & Fee"):
-    emissions, fee, recommendation = predict_emissions_and_fee(trip_id, distance, vehicle_type, fuel_type)
-    st.success(f"Predicted Emissions: {emissions} kg CO₂")
-    st.info(f"Calculated Fee: ${fee}")
-    if recommendation:
-        st.warning(f"Recommendation: {recommendation}")
+    # Display results
+    st.success(f"Predicted CO₂ Emissions: {predicted_emissions:.2f} kg")
+    st.info(f"Calculated Trip Fee: ${calculated_fee:.2f}")
